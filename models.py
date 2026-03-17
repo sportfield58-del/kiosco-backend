@@ -12,7 +12,7 @@ class Usuario(Base):
     password_hash = Column(String, nullable=False)
     rol = Column(String, default="vendedor")  # "dueño", "admin", "vendedor"
     activo = Column(Boolean, default=True)
-    creado_en = Column(DateTime, default=datetime.utcnow)
+    creado_en = Column(DateTime, default=datetime.now)
 
 
 class Turno(Base):
@@ -20,7 +20,7 @@ class Turno(Base):
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
     tipo = Column(String)  # "mañana", "tarde", "noche"
-    inicio = Column(DateTime, default=datetime.utcnow)
+    inicio = Column(DateTime, default=datetime.now)
     cierre = Column(DateTime, nullable=True)
     monto_apertura = Column(Float, default=0)
     monto_cierre = Column(Float, nullable=True)
@@ -40,7 +40,7 @@ class Producto(Base):
     stock_minimo = Column(Integer, default=5)
     categoria = Column(String, default="general")
     activo = Column(Boolean, default=True)
-    creado_en = Column(DateTime, default=datetime.utcnow)
+    creado_en = Column(DateTime, default=datetime.now)
 
 
 class Venta(Base):
@@ -50,7 +50,7 @@ class Venta(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
     total = Column(Float, nullable=False)
     medio_pago = Column(String, default="efectivo")  # "efectivo", "tarjeta", "transferencia"
-    fecha = Column(DateTime, default=datetime.utcnow)
+    fecha = Column(DateTime, default=datetime.now)
     anulada = Column(Boolean, default=False)
     turno = relationship("Turno", back_populates="ventas")
     usuario = relationship("Usuario")
@@ -75,5 +75,5 @@ class AuditLog(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     accion = Column(String)
     detalle = Column(Text)
-    fecha = Column(DateTime, default=datetime.utcnow)
+    fecha = Column(DateTime, default=datetime.now)
     usuario = relationship("Usuario")

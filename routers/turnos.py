@@ -47,7 +47,7 @@ def cerrar_turno(datos: dict, db: Session = Depends(get_db)):
         por_medio[v.medio_pago] = por_medio.get(v.medio_pago, 0) + v.total
 
     t.cerrado = True
-    t.cierre = datetime.utcnow()
+    t.cierre = datetime.now()
     t.monto_cierre = datos.get("monto_cierre", 0)
     db.commit()
 
