@@ -1,10 +1,9 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 from database import Base
 
-AR = pytz.timezone('America/Argentina/Buenos_Aires')
+AR = timezone(timedelta(hours=-3))
 
 def now_ar():
     return datetime.now(AR).replace(tzinfo=None)
@@ -80,7 +79,7 @@ class BotonRapido(Base):
     __tablename__ = "botones_rapidos"
     id = Column(Integer, primary_key=True, index=True)
     nombre = Column(String, nullable=False)
-    emoji = Column(String, default="🛒")
+    emoji = Column(String, default="??")
     precio = Column(Float, nullable=False)
     activo = Column(Boolean, default=True)
     orden = Column(Integer, default=0)
@@ -90,7 +89,7 @@ class SolicitudStock(Base):
     __tablename__ = "solicitudes_stock"
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
-    estado = Column(String, default="pendiente")  # pendiente, aprobada, rechazada
+    estado = Column(String, default="pendiente")
     fecha = Column(DateTime, default=now_ar)
     usuario = relationship("Usuario")
 
