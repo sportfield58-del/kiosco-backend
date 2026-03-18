@@ -6,29 +6,19 @@ from database import get_db
 router = APIRouter(prefix="/usuarios", tags=["usuarios"])
 
 
-def get_current_user(token: str, db: Session):
-    from jose import JWTError
-    try:
-        payload = auth.decode_token(token)
-        user = db.query(models.Usuario).filter_by(id=payload["sub"]).first()
-        if not user or not user.activo:
-            raise HTTPException(status_code=401, detail="Usuario no válido")
-        return user
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Token inválido")
-
-
 def audit(db, usuario_id, accion, detalle):
     db.add(models.AuditLog(usuario_id=usuario_id, accion=accion, detalle=detalle))
     db.commit()
 
 
 @router.get("")
-def listar(db: Session = Depends(get_db), current=Depends(lambda: None)):
+def listar(db: Session = Depends(get_db)):
     usuarios = db.query(models.Usuario).filter_by(activo=True).all()
     return [
         {"id": u.id, "nombre": u.nombre, "username": u.username,
-         "rol": u.rol, "activo": u.activo, "creado_en": u.creado_en}
+         "rol": u.rol, "activo": u.activo,
+         "stock_habilitado": getattr(u, "stock_habilitado", False),
+         "creado_en": u.creado_en}
         for u in usuarios
     ]
 
@@ -55,22 +45,19 @@ def editar(usuario_id: int, datos: dict, db: Session = Depends(get_db)):
     u = db.query(models.Usuario).filter_by(id=usuario_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    campos_modificados = []
-    if "nombre" in datos:
-        u.nombre = datos["nombre"]
-        campos_modificados.append("nombre")
-    if "rol" in datos:
-        u.rol = datos["rol"]
-        campos_modificados.append("rol")
+    cambios = []
+    for campo in ["nombre", "rol", "activo", "stock_habilitado"]:
+        if campo in datos:
+            valor_anterior = getattr(u, campo)
+            setattr(u, campo, datos[campo])
+            if valor_anterior != datos[campo]:
+                cambios.append(f"{campo}: {valor_anterior} -> {datos[campo]}")
     if "password" in datos and datos["password"]:
         u.password_hash = auth.hash_password(datos["password"])
-        campos_modificados.append("password")
-    if "activo" in datos:
-        u.activo = datos["activo"]
-        campos_modificados.append("activo")
+        cambios.append("password")
     db.commit()
     audit(db, usuario_id, "editar_usuario",
-          f"Usuario '{u.username}' modificó: {', '.join(campos_modificados)}")
+          f"Usuario '{u.username}' modifico: {', '.join(cambios)}")
     return {"ok": True}
 
 
