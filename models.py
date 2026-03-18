@@ -1,10 +1,9 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 from database import Base
 
-AR = pytz.timezone('America/Argentina/Buenos_Aires')
+AR = timezone(timedelta(hours=-3))
 
 def now_ar():
     return datetime.now(AR).replace(tzinfo=None)
