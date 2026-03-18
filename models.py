@@ -1,9 +1,10 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+import pytz
 from database import Base
 
-AR = timezone(timedelta(hours=-3))
+AR = pytz.timezone('America/Argentina/Buenos_Aires')
 
 def now_ar():
     return datetime.now(AR).replace(tzinfo=None)
@@ -17,6 +18,7 @@ class Usuario(Base):
     password_hash = Column(String, nullable=False)
     rol = Column(String, default="vendedor")
     activo = Column(Boolean, default=True)
+    stock_habilitado = Column(Boolean, default=False)
     creado_en = Column(DateTime, default=now_ar)
 
 
@@ -82,6 +84,15 @@ class BotonRapido(Base):
     precio = Column(Float, nullable=False)
     activo = Column(Boolean, default=True)
     orden = Column(Integer, default=0)
+
+
+class SolicitudStock(Base):
+    __tablename__ = "solicitudes_stock"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    estado = Column(String, default="pendiente")  # pendiente, aprobada, rechazada
+    fecha = Column(DateTime, default=now_ar)
+    usuario = relationship("Usuario")
 
 
 class AuditLog(Base):

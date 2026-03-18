@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 import models, auth
 from database import engine, get_db, Base
-from routers import usuarios, turnos, productos, ventas, reportes, botones
+from routers import usuarios, turnos, productos, ventas, reportes, botones, solicitudes
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,6 +25,7 @@ app.include_router(productos.router)
 app.include_router(ventas.router)
 app.include_router(reportes.router)
 app.include_router(botones.router)
+app.include_router(solicitudes.router)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
