@@ -1,7 +1,13 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import pytz
 from database import Base
+
+AR = pytz.timezone('America/Argentina/Buenos_Aires')
+
+def now_ar():
+    return datetime.now(AR).replace(tzinfo=None)
 
 
 class Usuario(Base):
@@ -10,17 +16,17 @@ class Usuario(Base):
     nombre = Column(String, nullable=False)
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    rol = Column(String, default="vendedor")  # "dueño", "admin", "vendedor"
+    rol = Column(String, default="vendedor")
     activo = Column(Boolean, default=True)
-    creado_en = Column(DateTime, default=datetime.now)
+    creado_en = Column(DateTime, default=now_ar)
 
 
 class Turno(Base):
     __tablename__ = "turnos"
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
-    tipo = Column(String)  # "mañana", "tarde", "noche"
-    inicio = Column(DateTime, default=datetime.now)
+    tipo = Column(String)
+    inicio = Column(DateTime, default=now_ar)
     cierre = Column(DateTime, nullable=True)
     monto_apertura = Column(Float, default=0)
     monto_cierre = Column(Float, nullable=True)
@@ -40,7 +46,7 @@ class Producto(Base):
     stock_minimo = Column(Integer, default=5)
     categoria = Column(String, default="general")
     activo = Column(Boolean, default=True)
-    creado_en = Column(DateTime, default=datetime.now)
+    creado_en = Column(DateTime, default=now_ar)
 
 
 class Venta(Base):
@@ -49,8 +55,8 @@ class Venta(Base):
     turno_id = Column(Integer, ForeignKey("turnos.id"))
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
     total = Column(Float, nullable=False)
-    medio_pago = Column(String, default="efectivo")  # "efectivo", "tarjeta", "transferencia"
-    fecha = Column(DateTime, default=datetime.now)
+    medio_pago = Column(String, default="efectivo")
+    fecha = Column(DateTime, default=now_ar)
     anulada = Column(Boolean, default=False)
     turno = relationship("Turno", back_populates="ventas")
     usuario = relationship("Usuario")
@@ -69,11 +75,21 @@ class ItemVenta(Base):
     producto = relationship("Producto")
 
 
+class BotonRapido(Base):
+    __tablename__ = "botones_rapidos"
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, nullable=False)
+    emoji = Column(String, default="🛒")
+    precio = Column(Float, nullable=False)
+    activo = Column(Boolean, default=True)
+    orden = Column(Integer, default=0)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     accion = Column(String)
     detalle = Column(Text)
-    fecha = Column(DateTime, default=datetime.now)
+    fecha = Column(DateTime, default=now_ar)
     usuario = relationship("Usuario")
