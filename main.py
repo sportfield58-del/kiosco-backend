@@ -50,13 +50,25 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
     return {
         "access_token": token,
         "token_type": "bearer",
-        "usuario": {"id": user.id, "nombre": user.nombre, "rol": user.rol, "username": user.username}
+        "usuario": {
+            "id": user.id,
+            "nombre": user.nombre,
+            "rol": user.rol,
+            "username": user.username,
+            "stock_habilitado": user.stock_habilitado
+        }
     }
 
 
 @app.get("/me")
 def me(current=Depends(get_current_user)):
-    return {"id": current.id, "nombre": current.nombre, "rol": current.rol, "username": current.username}
+    return {
+        "id": current.id,
+        "nombre": current.nombre,
+        "rol": current.rol,
+        "username": current.username,
+        "stock_habilitado": current.stock_habilitado
+    }
 
 
 @app.get("/health")

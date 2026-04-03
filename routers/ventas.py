@@ -21,16 +21,37 @@ def audit(db, usuario_id, accion, detalle):
         db.rollback()
 
 
+def aplicar_recargo_nocturno(total: float) -> tuple[float, bool]:
+    """Devuelve (total_final, es_nocturno). De 22:00 a 06:00 aplica +10%."""
+    hora = datetime.now().hour
+    if hora >= 22 or hora < 6:
+        return round(total * 1.10, 2), True
+    return total, False
+
+
+@router.get("/recargo-nocturno")
+def estado_recargo_nocturno():
+    """El frontend consulta esto para mostrar el banner de tarifa nocturna."""
+    hora = datetime.now().hour
+    activo = hora >= 22 or hora < 6
+    return {"activo": activo, "hora": hora}
+
+
 @router.post("")
 def registrar_venta(datos: dict, db: Session = Depends(get_db)):
     usuario_id = datos["usuario_id"]
     turno = db.query(models.Turno).filter_by(usuario_id=usuario_id, cerrado=False).first()
     if not turno:
         raise HTTPException(status_code=400, detail="Abri un turno primero")
+
+    # Aplicar recargo nocturno si corresponde
+    total_original = datos["total"]
+    total_final, es_nocturno = aplicar_recargo_nocturno(total_original)
+
     venta = models.Venta(
         turno_id=turno.id,
         usuario_id=usuario_id,
-        total=datos["total"],
+        total=total_final,
         medio_pago=datos.get("medio_pago", "efectivo")
     )
     db.add(venta)
@@ -68,10 +89,18 @@ def registrar_venta(datos: dict, db: Session = Depends(get_db)):
         db.add(iv)
         nombres_items.append(f"{producto.nombre} x{item['cantidad']}")
     db.commit()
+
+    recargo_txt = f" | ⚠ Recargo nocturno +10% (original: ${total_original:.2f})" if es_nocturno else ""
     audit(db, usuario_id, "venta",
           f"Venta #{venta.id} | Total: ${venta.total:.2f} | "
-          f"Pago: {venta.medio_pago} | Items: {', '.join(nombres_items)}")
-    return {"venta_id": venta.id, "total": venta.total}
+          f"Pago: {venta.medio_pago} | Items: {', '.join(nombres_items)}{recargo_txt}")
+
+    return {
+        "venta_id": venta.id,
+        "total": venta.total,
+        "recargo_nocturno": es_nocturno,
+        "total_original": total_original if es_nocturno else None
+    }
 
 
 @router.get("/turno/{turno_id}")
