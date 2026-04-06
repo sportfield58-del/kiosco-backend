@@ -23,7 +23,9 @@ def audit(db, usuario_id, accion, detalle):
 
 def aplicar_recargo_nocturno(total: float) -> tuple[float, bool]:
     """Devuelve (total_final, es_nocturno). De 22:00 a 06:00 aplica +10%."""
-    hora = datetime.now().hour
+    from datetime import timezone, timedelta
+    AR = timezone(timedelta(hours=-3))
+    hora = datetime.now(AR).hour
     if hora >= 22 or hora < 6:
         return round(total * 1.10, 2), True
     return total, False
@@ -32,7 +34,9 @@ def aplicar_recargo_nocturno(total: float) -> tuple[float, bool]:
 @router.get("/recargo-nocturno")
 def estado_recargo_nocturno():
     """El frontend consulta esto para mostrar el banner de tarifa nocturna."""
-    hora = datetime.now().hour
+    from datetime import timezone, timedelta
+    AR = timezone(timedelta(hours=-3))
+    hora = datetime.now(AR).hour
     activo = hora >= 22 or hora < 6
     return {"activo": activo, "hora": hora}
 
