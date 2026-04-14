@@ -56,6 +56,9 @@ class Venta(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id"))
     total = Column(Float, nullable=False)
     medio_pago = Column(String, default="efectivo")
+    # Pago mixto
+    monto_efectivo = Column(Float, nullable=True)
+    monto_mp = Column(Float, nullable=True)
     fecha = Column(DateTime, default=now_ar)
     anulada = Column(Boolean, default=False)
     turno = relationship("Turno", back_populates="ventas")
@@ -72,6 +75,58 @@ class ItemVenta(Base):
     precio_unitario = Column(Float)
     subtotal = Column(Float)
     venta = relationship("Venta", back_populates="items")
+    producto = relationship("Producto")
+
+
+class ConsumoEmpleado(Base):
+    """Consumo del empleado con 20% off — se cobra después (deuda)."""
+    __tablename__ = "consumos_empleado"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=True)
+    total_original = Column(Float, nullable=False)
+    descuento = Column(Float, nullable=False)  # 20%
+    total_a_cobrar = Column(Float, nullable=False)
+    cobrado = Column(Boolean, default=False)
+    fecha = Column(DateTime, default=now_ar)
+    usuario = relationship("Usuario")
+    items = relationship("ItemConsumoEmpleado", back_populates="consumo")
+
+
+class ItemConsumoEmpleado(Base):
+    __tablename__ = "items_consumo_empleado"
+    id = Column(Integer, primary_key=True, index=True)
+    consumo_id = Column(Integer, ForeignKey("consumos_empleado.id"))
+    producto_id = Column(Integer, ForeignKey("productos.id"))
+    cantidad = Column(Integer)
+    precio_unitario = Column(Float)
+    subtotal = Column(Float)
+    consumo = relationship("ConsumoEmpleado", back_populates="items")
+    producto = relationship("Producto")
+
+
+class ConsumoDueno(Base):
+    """Consumo del dueño — sale del stock, no se cobra."""
+    __tablename__ = "consumos_dueno"
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    turno_id = Column(Integer, ForeignKey("turnos.id"), nullable=True)
+    total_costo = Column(Float, nullable=False)
+    motivo = Column(String, default="consumo propio")
+    fecha = Column(DateTime, default=now_ar)
+    usuario = relationship("Usuario")
+    items = relationship("ItemConsumoDueno", back_populates="consumo")
+
+
+class ItemConsumoDueno(Base):
+    __tablename__ = "items_consumo_dueno"
+    id = Column(Integer, primary_key=True, index=True)
+    consumo_id = Column(Integer, ForeignKey("consumos_dueno.id"))
+    producto_id = Column(Integer, ForeignKey("productos.id"))
+    cantidad = Column(Integer)
+    precio_unitario = Column(Float)
+    subtotal = Column(Float)
+    consumo = relationship("ConsumoDueno", back_populates="items")
     producto = relationship("Producto")
 
 
