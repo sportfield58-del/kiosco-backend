@@ -1,10 +1,32 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import openpyxl
-import models
+from openpyxl.styles import Font, PatternFill, Alignment
+import io
+from datetime import date
+import models, auth
 from database import get_db
 
 router = APIRouter(prefix="/productos", tags=["productos"])
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+
+def _get_dueno_o_admin(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    try:
+        payload = auth.decode_token(token)
+        user = db.query(models.Usuario).filter_by(id=payload["sub"]).first()
+        if not user or not user.activo:
+            raise HTTPException(status_code=401, detail="Usuario no válido")
+        if user.rol not in ("dueño", "admin"):
+            raise HTTPException(status_code=403, detail="Sin permiso")
+        return user
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token inválido")
 
 
 def audit(db, usuario_id, accion, detalle):
@@ -149,6 +171,46 @@ async def importar_excel(
     audit(db, usuario_id, "importar_excel",
           f"Importación Excel: {creados} creados, {actualizados} actualizados, {len(errores)} errores")
     return {"creados": creados, "actualizados": actualizados, "errores": errores}
+
+
+@router.get("/exportar-excel")
+def exportar_excel(db: Session = Depends(get_db), _=Depends(_get_dueno_o_admin)):
+    prods = db.query(models.Producto).filter_by(activo=True).order_by(models.Producto.nombre).all()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Productos"
+
+    header_fill = PatternFill("solid", fgColor="1a1a2e")
+    header_font = Font(bold=True, color="FFFFFF")
+    low_stock_fill = PatternFill("solid", fgColor="fff3cd")
+
+    headers = ["Código", "Nombre", "Costo", "Precio de venta", "Ganancia %", "Stock actual", "Stock mínimo"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for row_idx, p in enumerate(prods, 2):
+        ganancia = round(((p.precio_venta - p.precio_costo) / p.precio_costo * 100), 1) if p.precio_costo else 0
+        stock_bajo = p.stock < p.stock_minimo
+        valores = [p.codigo_barra, p.nombre, p.precio_costo, p.precio_venta, ganancia, p.stock, p.stock_minimo]
+        for col, val in enumerate(valores, 1):
+            cell = ws.cell(row=row_idx, column=col, value=val)
+            if stock_bajo:
+                cell.fill = low_stock_fill
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"productos_kiosco_{date.today()}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 def _serializar(p):
