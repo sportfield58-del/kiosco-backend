@@ -1,32 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 import io
 from datetime import date
-import models, auth
+import models
 from database import get_db
 
 router = APIRouter(prefix="/productos", tags=["productos"])
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-
-def _get_dueno_o_admin(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    try:
-        payload = auth.decode_token(token)
-        user = db.query(models.Usuario).filter_by(id=payload["sub"]).first()
-        if not user or not user.activo:
-            raise HTTPException(status_code=401, detail="Usuario no válido")
-        if user.rol not in ("dueño", "admin"):
-            raise HTTPException(status_code=403, detail="Sin permiso")
-        return user
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token inválido")
 
 
 def audit(db, usuario_id, accion, detalle):
@@ -174,7 +156,7 @@ async def importar_excel(
 
 
 @router.get("/exportar-excel")
-def exportar_excel(db: Session = Depends(get_db), _=Depends(_get_dueno_o_admin)):
+def exportar_excel(db: Session = Depends(get_db)):
     prods = db.query(models.Producto).filter_by(activo=True).order_by(models.Producto.nombre).all()
 
     wb = openpyxl.Workbook()
