@@ -181,9 +181,9 @@ def exportar_excel(db: Session = Depends(get_db), _=Depends(_get_dueno_o_admin))
     ws = wb.active
     ws.title = "Productos"
 
-    header_fill = PatternFill(fill_type="solid", fgColor="FF1a1a2e")
+    header_fill = PatternFill(fill_type="solid", fgColor="FF1A1A2E")
     header_font = Font(bold=True, color="FFFFFFFF")
-    low_stock_fill = PatternFill(fill_type="solid", fgColor="FFfff3cd")
+    low_stock_fill = PatternFill(fill_type="solid", fgColor="FFFFF3CD")
 
     headers = ["Código", "Nombre", "Costo", "Precio de venta", "Ganancia %", "Stock actual", "Stock mínimo"]
     for col, h in enumerate(headers, 1):
