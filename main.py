@@ -1,7 +1,9 @@
 import os
+from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import models, auth
 from database import engine, get_db, Base
@@ -71,9 +73,23 @@ def me(current=Depends(get_current_user)):
     }
 
 
+@app.get("/ping")
+def ping():
+    return {"pong": True, "timestamp": datetime.utcnow().isoformat()}
+
+
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(db: Session = Depends(get_db)):
+    try:
+        db.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception:
+        db_status = "error"
+    return {
+        "status": "ok" if db_status == "ok" else "error",
+        "db": db_status,
+        "timestamp": datetime.utcnow().isoformat()
+    }
 
 
 @app.on_event("startup")
