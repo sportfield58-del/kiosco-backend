@@ -111,8 +111,8 @@ def alertas(
         )
 
     if usuario_nombre:
-        query = query.join(models.Usuario, models.AuditLog.usuario_id == models.Usuario.id, isouter=True)
-        query = query.filter(models.Usuario.nombre.ilike(f"%{usuario_nombre}%"))
+        query = query.join(models.Usuario, models.AuditLog.usuario_id == models.Usuario.id)
+        query = query.filter(models.Usuario.id == int(usuario_nombre))
 
     if accion:
         query = query.filter(models.AuditLog.accion.ilike(f"%{accion}%"))
