@@ -89,10 +89,37 @@ def reporte_semana(db: Session = Depends(get_db)):
 
 
 @router.get("/alertas")
-def alertas(db: Session = Depends(get_db)):
-    logs = db.query(models.AuditLog).order_by(
-        models.AuditLog.fecha.desc()
-    ).limit(100).all()
+def alertas(
+    fecha: str = None,
+    hora_desde: str = None,
+    hora_hasta: str = None,
+    usuario_nombre: str = None,
+    accion: str = None,
+    db: Session = Depends(get_db)
+):
+    from datetime import time as time_type
+
+    query = db.query(models.AuditLog)
+
+    if fecha:
+        fecha_dt = datetime.strptime(fecha, "%Y-%m-%d").date()
+        h_inicio = datetime.strptime(hora_desde, "%H:%M").time() if hora_desde else time_type(0, 0, 0)
+        h_fin    = datetime.strptime(hora_hasta, "%H:%M").time() if hora_hasta else time_type(23, 59, 59)
+        query = query.filter(
+            models.AuditLog.fecha >= datetime.combine(fecha_dt, h_inicio),
+            models.AuditLog.fecha <= datetime.combine(fecha_dt, h_fin)
+        )
+
+    if usuario_nombre:
+        query = query.join(models.Usuario, models.AuditLog.usuario_id == models.Usuario.id, isouter=True)
+        query = query.filter(models.Usuario.nombre.ilike(f"%{usuario_nombre}%"))
+
+    if accion:
+        query = query.filter(models.AuditLog.accion.ilike(f"%{accion}%"))
+
+    limit = 500 if fecha else 100
+    logs = query.order_by(models.AuditLog.fecha.desc()).limit(limit).all()
+
     return [
         {
             "id": l.id,
