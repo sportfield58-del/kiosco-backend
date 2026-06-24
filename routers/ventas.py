@@ -1,10 +1,32 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
+import threading
 import models
 from database import get_db
 
 router = APIRouter(prefix="/ventas", tags=["ventas"])
+
+# ── Idempotencia para pagos (evita duplicados por timeout/reintento) ──
+_idem_lock  = threading.Lock()
+_idem_store: dict = {}  # key -> (venta_id, expires_at)
+
+def _check_idem(key: str):
+    with _idem_lock:
+        if key in _idem_store:
+            venta_id, expires = _idem_store[key]
+            if datetime.utcnow() < expires:
+                return venta_id
+            del _idem_store[key]
+    return None
+
+def _store_idem(key: str, venta_id: int):
+    with _idem_lock:
+        _idem_store[key] = (venta_id, datetime.utcnow() + timedelta(minutes=10))
+        # Limpiar entradas vencidas
+        now = datetime.utcnow()
+        for k in [k for k, (_, exp) in list(_idem_store.items()) if now > exp]:
+            del _idem_store[k]
 
 
 def audit(db, usuario_id, accion, detalle):
@@ -42,6 +64,22 @@ def estado_recargo_nocturno():
 
 @router.post("")
 def registrar_venta(datos: dict, db: Session = Depends(get_db)):
+    # Verificar idempotencia — si ya procesamos esta key, devolver la venta existente
+    idem_key = datos.get("idempotency_key")
+    if idem_key:
+        existing_id = _check_idem(idem_key)
+        if existing_id:
+            venta = db.query(models.Venta).filter_by(id=existing_id).first()
+            if venta:
+                return {
+                    "venta_id": venta.id,
+                    "total": venta.total,
+                    "recargo_nocturno": False,
+                    "total_original": None,
+                    "medio_pago": venta.medio_pago,
+                    "duplicate": True,
+                }
+
     usuario_id = datos["usuario_id"]
     turno = db.query(models.Turno).filter_by(usuario_id=usuario_id, cerrado=False).first()
     if not turno:
@@ -112,6 +150,9 @@ def registrar_venta(datos: dict, db: Session = Depends(get_db)):
     audit(db, usuario_id, "venta",
           f"Venta #{venta.id} | Total: ${venta.total:.2f} | "
           f"Pago: {medio} | Items: {', '.join(nombres_items)}{recargo_txt}{mixto_txt}")
+
+    if idem_key:
+        _store_idem(idem_key, venta.id)
 
     return {
         "venta_id": venta.id,
