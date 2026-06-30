@@ -80,6 +80,67 @@ def editar(producto_id: int, datos: dict, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.delete("/{producto_id}")
+def eliminar(producto_id: int, usuario_id: int = 0, db: Session = Depends(get_db)):
+    p = db.query(models.Producto).filter_by(id=producto_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="No encontrado")
+    p.activo = False
+    db.commit()
+    audit(db, usuario_id, "eliminar_producto",
+          f"Producto '{p.nombre}' ({p.codigo_barra}) eliminado. Stock que tenía: {p.stock}")
+    return {"ok": True}
+
+
+@router.get("/duplicados")
+def duplicados(db: Session = Depends(get_db)):
+    """Agrupa productos activos por nombre (normalizado) para detectar cargas repetidas."""
+    prods = db.query(models.Producto).filter_by(activo=True).order_by(models.Producto.nombre).all()
+    grupos = {}
+    for p in prods:
+        clave = p.nombre.strip().lower()
+        grupos.setdefault(clave, []).append(p)
+    return [
+        {
+            "nombre": grupo[0].nombre,
+            "stock_total": sum(p.stock for p in grupo),
+            "productos": [_serializar(p) for p in grupo]
+        }
+        for grupo in grupos.values() if len(grupo) > 1
+    ]
+
+
+@router.post("/fusionar")
+def fusionar(datos: dict, db: Session = Depends(get_db)):
+    """Fusiona productos duplicados en uno solo, sumando el stock de todos en el 'principal'."""
+    principal_id = datos["principal_id"]
+    ids = datos["ids"]
+    usuario_id = datos.get("usuario_id")
+
+    principal = db.query(models.Producto).filter_by(id=principal_id).first()
+    if not principal:
+        raise HTTPException(status_code=404, detail="Producto principal no encontrado")
+
+    stock_sumado = principal.stock
+    fusionados = []
+    for pid in ids:
+        if pid == principal_id:
+            continue
+        p = db.query(models.Producto).filter_by(id=pid).first()
+        if not p or not p.activo:
+            continue
+        stock_sumado += p.stock
+        fusionados.append(f"{p.nombre} ({p.codigo_barra}, stock {p.stock})")
+        p.activo = False
+
+    principal.stock = stock_sumado
+    db.commit()
+    audit(db, usuario_id, "fusionar_productos",
+          f"Fusionados en '{principal.nombre}' ({principal.codigo_barra}): "
+          f"{', '.join(fusionados) if fusionados else 'ninguno'}. Stock final: {stock_sumado}")
+    return {"ok": True, "stock_final": stock_sumado}
+
+
 @router.post("/ajuste-stock/{producto_id}")
 def ajustar_stock(producto_id: int, datos: dict, db: Session = Depends(get_db)):
     p = db.query(models.Producto).filter_by(id=producto_id).first()
