@@ -41,13 +41,38 @@ def alertas_stock(db: Session = Depends(get_db)):
 
 @router.post("")
 def crear(datos: dict, db: Session = Depends(get_db)):
-    if db.query(models.Producto).filter_by(codigo_barra=datos["codigo_barra"]).first():
-        raise HTTPException(status_code=400, detail="Código de barra ya existe")
+    nombre = datos.get("nombre", "").strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre del producto es obligatorio")
+    precio_venta = datos.get("precio_venta")
+    if not precio_venta or float(precio_venta) <= 0:
+        raise HTTPException(status_code=400, detail="El precio de venta debe ser mayor a 0")
+
+    codigo = datos.get("codigo_barra", "").strip()
+
+    # Si el código ya existe pero el producto estaba eliminado, lo reactivamos
+    if codigo:
+        existente = db.query(models.Producto).filter_by(codigo_barra=codigo).first()
+        if existente:
+            if existente.activo:
+                raise HTTPException(status_code=400, detail="Código de barra ya existe")
+            existente.activo = True
+            existente.nombre = nombre
+            existente.precio_costo = datos.get("precio_costo", 0)
+            existente.precio_venta = float(precio_venta)
+            existente.stock = datos.get("stock", 0)
+            existente.stock_minimo = datos.get("stock_minimo", 5)
+            existente.categoria = datos.get("categoria", "general")
+            db.commit()
+            audit(db, datos.get("usuario_id"), "reactivar_producto",
+                  f"Producto '{existente.nombre}' ({existente.codigo_barra}) reactivado. Stock: {existente.stock}")
+            return {"ok": True, "id": existente.id, "reactivado": True}
+
     p = models.Producto(
-        codigo_barra=datos["codigo_barra"],
-        nombre=datos["nombre"],
+        codigo_barra=codigo,
+        nombre=nombre,
         precio_costo=datos.get("precio_costo", 0),
-        precio_venta=datos["precio_venta"],
+        precio_venta=float(precio_venta),
         stock=datos.get("stock", 0),
         stock_minimo=datos.get("stock_minimo", 5),
         categoria=datos.get("categoria", "general")
