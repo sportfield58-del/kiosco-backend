@@ -66,7 +66,16 @@ def eliminar(usuario_id: int, db: Session = Depends(get_db)):
     u = db.query(models.Usuario).filter_by(id=usuario_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="No encontrado")
+    if not u.activo:
+        raise HTTPException(status_code=400, detail="El usuario ya estaba desactivado")
+
+    username_original = u.username
     u.activo = False
+    # `username` es UNIQUE en la base y "eliminar" solo desactiva (para no perder el historial de
+    # ventas/turnos del usuario). Sin liberar el nombre acá, quedaba tomado para siempre: no se
+    # podía volver a dar de alta a alguien con el mismo username nunca más.
+    u.username = f"{username_original}__baja{u.id}"
+    db.add(models.AuditLog(usuario_id=usuario_id, accion="desactivar_usuario",
+                           detalle=f"Usuario '{username_original}' desactivado"))
     db.commit()
-    audit(db, usuario_id, "desactivar_usuario", f"Usuario '{u.username}' desactivado")
     return {"ok": True}
