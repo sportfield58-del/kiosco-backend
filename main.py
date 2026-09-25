@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import models, auth
@@ -21,26 +21,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(usuarios.router)
-app.include_router(turnos.router)
-app.include_router(productos.router)
-app.include_router(ventas.router)
-app.include_router(reportes.router)
-app.include_router(botones.router)
-app.include_router(solicitudes.router)
+# Todos los endpoints exigen sesión (Bearer token). Usuarios y reportes son solo del dueño/admin;
+# las operaciones sensibles de los demás routers se restringen endpoint por endpoint.
+login_requerido = [Depends(auth.get_current_user)]
+solo_dueno = [Depends(auth.require_dueno)]
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+app.include_router(usuarios.router, dependencies=solo_dueno)
+app.include_router(turnos.router, dependencies=login_requerido)
+app.include_router(productos.router, dependencies=login_requerido)
+app.include_router(ventas.router, dependencies=login_requerido)
+app.include_router(reportes.router, dependencies=solo_dueno)
+app.include_router(botones.router, dependencies=login_requerido)
+app.include_router(solicitudes.router, dependencies=login_requerido)
 
-
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    try:
-        payload = auth.decode_token(token)
-        user = db.query(models.Usuario).filter_by(id=payload["sub"]).first()
-        if not user or not user.activo:
-            raise HTTPException(status_code=401, detail="Usuario no válido")
-        return user
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token inválido")
+@app.middleware("http")
+async def no_cachear_api(request, call_next):
+    """Los datos de stock/turnos/ventas nunca deben servirse desde una caché intermedia o del navegador."""
+    response = await call_next(request)
+    if request.method == "GET":
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.post("/login")
@@ -63,7 +63,7 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 
 
 @app.get("/me")
-def me(current=Depends(get_current_user)):
+def me(current=Depends(auth.get_current_user)):
     return {
         "id": current.id,
         "nombre": current.nombre,

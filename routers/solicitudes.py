@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
+import auth
 import models
 
 router = APIRouter(prefix="/solicitudes", tags=["solicitudes"])
@@ -37,7 +38,7 @@ def solicitar_acceso_stock(datos: dict, db: Session = Depends(get_db)):
     return {"ok": True, "solicitud_id": s.id}
 
 
-@router.get("/stock/pendientes")
+@router.get("/stock/pendientes", dependencies=[Depends(auth.require_dueno)])
 def listar_pendientes(db: Session = Depends(get_db)):
     solicitudes = db.query(models.SolicitudStock).filter_by(
         estado="pendiente"
@@ -54,7 +55,7 @@ def listar_pendientes(db: Session = Depends(get_db)):
     ]
 
 
-@router.post("/stock/{solicitud_id}/aprobar")
+@router.post("/stock/{solicitud_id}/aprobar", dependencies=[Depends(auth.require_dueno)])
 def aprobar(solicitud_id: int, datos: dict, db: Session = Depends(get_db)):
     s = db.query(models.SolicitudStock).filter_by(id=solicitud_id).first()
     if not s:
@@ -72,7 +73,7 @@ def aprobar(solicitud_id: int, datos: dict, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.post("/stock/{solicitud_id}/rechazar")
+@router.post("/stock/{solicitud_id}/rechazar", dependencies=[Depends(auth.require_dueno)])
 def rechazar(solicitud_id: int, datos: dict, db: Session = Depends(get_db)):
     s = db.query(models.SolicitudStock).filter_by(id=solicitud_id).first()
     if not s:
@@ -82,7 +83,7 @@ def rechazar(solicitud_id: int, datos: dict, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@router.post("/stock/revocar/{usuario_id}")
+@router.post("/stock/revocar/{usuario_id}", dependencies=[Depends(auth.require_dueno)])
 def revocar(usuario_id: int, datos: dict, db: Session = Depends(get_db)):
     u = db.query(models.Usuario).filter_by(id=usuario_id).first()
     if u:

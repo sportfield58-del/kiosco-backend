@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import threading
+import auth
 import models
 from database import get_db
 
@@ -239,7 +240,7 @@ def consumos_empleado(usuario_id: int, db: Session = Depends(get_db)):
     } for c in consumos]
 
 
-@router.post("/consumo-empleado/{consumo_id}/cobrar")
+@router.post("/consumo-empleado/{consumo_id}/cobrar", dependencies=[Depends(auth.require_dueno)])
 def cobrar_consumo_empleado(consumo_id: int, datos: dict, db: Session = Depends(get_db)):
     """Marcar consumo de empleado como cobrado."""
     consumo = db.query(models.ConsumoEmpleado).filter_by(id=consumo_id).first()
@@ -253,7 +254,7 @@ def cobrar_consumo_empleado(consumo_id: int, datos: dict, db: Session = Depends(
 
 
 # ── CONSUMO DUEÑO ──────────────────────────────────────────
-@router.post("/consumo-dueno")
+@router.post("/consumo-dueno", dependencies=[Depends(auth.require_dueno)])
 def consumo_dueno(datos: dict, db: Session = Depends(get_db)):
     """Dueño consume productos — sale del stock, no se cobra."""
     usuario_id = datos["usuario_id"]
@@ -319,7 +320,7 @@ def ventas_del_turno(turno_id: int, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/anular/{venta_id}")
+@router.post("/anular/{venta_id}", dependencies=[Depends(auth.require_dueno)])
 def anular_venta(venta_id: int, datos: dict, db: Session = Depends(get_db)):
     venta = db.query(models.Venta).filter_by(id=venta_id).first()
     if not venta:

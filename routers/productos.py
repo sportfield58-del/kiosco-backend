@@ -1,19 +1,63 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 import io
+import logging
+import uuid
 from datetime import date
+import auth
 import models
 from database import get_db
 
 router = APIRouter(prefix="/productos", tags=["productos"])
+log = logging.getLogger("kiosco.productos")
 
 
 def audit(db, usuario_id, accion, detalle):
-    db.add(models.AuditLog(usuario_id=usuario_id, accion=accion, detalle=detalle))
-    db.commit()
+    """Agrega el registro de auditoría a la transacción en curso, SIN commit.
+
+    Se confirma junto con el cambio de datos en `_confirmar`, así nunca queda un stock
+    guardado sin su auditoría (ni una respuesta de error con el dato ya persistido).
+    """
+    db.add(models.AuditLog(usuario_id=int(usuario_id) if usuario_id else None,
+                           accion=accion, detalle=detalle))
+
+
+def _confirmar(db):
+    """Commit único. Ante cualquier fallo hace rollback y devuelve un error claro al cliente."""
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        log.warning("Conflicto de integridad al guardar producto: %s", e)
+        raise HTTPException(status_code=409, detail="Conflicto al guardar: el código de barra ya está en uso")
+    except Exception:
+        db.rollback()
+        log.exception("Error al confirmar cambios de stock")
+        raise HTTPException(status_code=500, detail="No se pudo guardar en la base de datos. No se hicieron cambios, reintentá.")
+
+
+def _entero(valor, campo, minimo=0):
+    try:
+        n = int(valor)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"'{campo}' debe ser un número entero")
+    if n < minimo:
+        raise HTTPException(status_code=400, detail=f"'{campo}' no puede ser menor a {minimo}")
+    return n
+
+
+def _numero(valor, campo):
+    try:
+        n = float(valor or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"'{campo}' debe ser un número")
+    if n < 0:
+        raise HTTPException(status_code=400, detail=f"'{campo}' no puede ser negativo")
+    return n
 
 
 @router.get("")
@@ -39,85 +83,110 @@ def alertas_stock(db: Session = Depends(get_db)):
     return [_serializar(p) for p in prods]
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(auth.require_stock_access)])
 def crear(datos: dict, db: Session = Depends(get_db)):
     nombre = datos.get("nombre", "").strip()
     if not nombre:
         raise HTTPException(status_code=400, detail="El nombre del producto es obligatorio")
-    precio_venta = datos.get("precio_venta")
-    if not precio_venta or float(precio_venta) <= 0:
+    precio_venta = _numero(datos.get("precio_venta"), "precio_venta")
+    if precio_venta <= 0:
         raise HTTPException(status_code=400, detail="El precio de venta debe ser mayor a 0")
+    precio_costo = _numero(datos.get("precio_costo"), "precio_costo")
+    stock = _entero(datos.get("stock", 0) or 0, "stock")
+    stock_minimo = _entero(datos.get("stock_minimo", 5) or 0, "stock_minimo")
+    categoria = datos.get("categoria") or "general"
 
-    codigo = datos.get("codigo_barra", "").strip()
+    codigo = (datos.get("codigo_barra") or "").strip()
+    if not codigo:
+        # codigo_barra es UNIQUE: dos productos sin código romperían con "" duplicado (error 500)
+        codigo = f"SIN-{uuid.uuid4().hex[:8].upper()}"
 
     # Si el código ya existe pero el producto estaba eliminado, lo reactivamos
-    if codigo:
-        existente = db.query(models.Producto).filter_by(codigo_barra=codigo).first()
-        if existente:
-            if existente.activo:
-                raise HTTPException(status_code=400, detail="Código de barra ya existe")
-            existente.activo = True
-            existente.nombre = nombre
-            existente.precio_costo = datos.get("precio_costo", 0)
-            existente.precio_venta = float(precio_venta)
-            existente.stock = datos.get("stock", 0)
-            existente.stock_minimo = datos.get("stock_minimo", 5)
-            existente.categoria = datos.get("categoria", "general")
-            db.commit()
-            audit(db, datos.get("usuario_id"), "reactivar_producto",
-                  f"Producto '{existente.nombre}' ({existente.codigo_barra}) reactivado. Stock: {existente.stock}")
-            return {"ok": True, "id": existente.id, "reactivado": True}
+    existente = db.query(models.Producto).filter_by(codigo_barra=codigo).first()
+    if existente:
+        if existente.activo:
+            raise HTTPException(status_code=400, detail="Código de barra ya existe")
+        existente.activo = True
+        existente.nombre = nombre
+        existente.precio_costo = precio_costo
+        existente.precio_venta = precio_venta
+        existente.stock = stock
+        existente.stock_minimo = stock_minimo
+        existente.categoria = categoria
+        audit(db, datos.get("usuario_id"), "reactivar_producto",
+              f"Producto '{existente.nombre}' ({existente.codigo_barra}) reactivado. Stock: {existente.stock}")
+        _confirmar(db)
+        return {"ok": True, "id": existente.id, "reactivado": True, "producto": _serializar(existente)}
 
     p = models.Producto(
         codigo_barra=codigo,
         nombre=nombre,
-        precio_costo=datos.get("precio_costo", 0),
-        precio_venta=float(precio_venta),
-        stock=datos.get("stock", 0),
-        stock_minimo=datos.get("stock_minimo", 5),
-        categoria=datos.get("categoria", "general")
+        precio_costo=precio_costo,
+        precio_venta=precio_venta,
+        stock=stock,
+        stock_minimo=stock_minimo,
+        categoria=categoria
     )
     db.add(p)
-    db.commit()
-    db.refresh(p)
+    db.flush()  # obtiene el id sin cerrar la transacción
     audit(db, datos.get("usuario_id"), "crear_producto",
           f"Producto '{p.nombre}' ({p.codigo_barra}) creado. Stock: {p.stock}, Precio: ${p.precio_venta}")
-    return {"ok": True, "id": p.id}
+    _confirmar(db)
+    db.refresh(p)
+    return {"ok": True, "id": p.id, "producto": _serializar(p)}
 
 
-@router.put("/{producto_id}")
+@router.put("/{producto_id}", dependencies=[Depends(auth.require_stock_access)])
 def editar(producto_id: int, datos: dict, db: Session = Depends(get_db)):
     p = db.query(models.Producto).filter_by(id=producto_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="No encontrado")
+
+    nuevos = {}
+    if "nombre" in datos:
+        nuevos["nombre"] = (datos["nombre"] or "").strip()
+        if not nuevos["nombre"]:
+            raise HTTPException(status_code=400, detail="El nombre del producto es obligatorio")
+    if "precio_costo" in datos:
+        nuevos["precio_costo"] = _numero(datos["precio_costo"], "precio_costo")
+    if "precio_venta" in datos:
+        nuevos["precio_venta"] = _numero(datos["precio_venta"], "precio_venta")
+        if nuevos["precio_venta"] <= 0:
+            raise HTTPException(status_code=400, detail="El precio de venta debe ser mayor a 0")
+    if "stock" in datos:
+        nuevos["stock"] = _entero(datos["stock"], "stock")
+    if "stock_minimo" in datos:
+        nuevos["stock_minimo"] = _entero(datos["stock_minimo"], "stock_minimo")
+    if "categoria" in datos:
+        nuevos["categoria"] = datos["categoria"] or "general"
+
     cambios = []
-    campos = ["nombre", "precio_costo", "precio_venta", "stock", "stock_minimo", "categoria"]
-    for campo in campos:
-        if campo in datos:
-            valor_anterior = getattr(p, campo)
-            setattr(p, campo, datos[campo])
-            if valor_anterior != datos[campo]:
-                cambios.append(f"{campo}: {valor_anterior} → {datos[campo]}")
-    db.commit()
+    for campo, valor in nuevos.items():
+        valor_anterior = getattr(p, campo)
+        if valor_anterior != valor:
+            setattr(p, campo, valor)
+            cambios.append(f"{campo}: {valor_anterior} → {valor}")
     if cambios:
         audit(db, datos.get("usuario_id"), "editar_producto",
               f"Producto '{p.nombre}' modificado: {' | '.join(cambios)}")
-    return {"ok": True}
+        _confirmar(db)
+        db.refresh(p)
+    return {"ok": True, "producto": _serializar(p)}
 
 
-@router.delete("/{producto_id}")
+@router.delete("/{producto_id}", dependencies=[Depends(auth.require_dueno)])
 def eliminar(producto_id: int, usuario_id: int = 0, db: Session = Depends(get_db)):
     p = db.query(models.Producto).filter_by(id=producto_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="No encontrado")
     p.activo = False
-    db.commit()
     audit(db, usuario_id, "eliminar_producto",
           f"Producto '{p.nombre}' ({p.codigo_barra}) eliminado. Stock que tenía: {p.stock}")
+    _confirmar(db)
     return {"ok": True}
 
 
-@router.get("/duplicados")
+@router.get("/duplicados", dependencies=[Depends(auth.require_dueno)])
 def duplicados(db: Session = Depends(get_db)):
     """Agrupa productos activos por nombre (normalizado) para detectar cargas repetidas."""
     prods = db.query(models.Producto).filter_by(activo=True).order_by(models.Producto.nombre).all()
@@ -135,7 +204,7 @@ def duplicados(db: Session = Depends(get_db)):
     ]
 
 
-@router.post("/fusionar")
+@router.post("/fusionar", dependencies=[Depends(auth.require_dueno)])
 def fusionar(datos: dict, db: Session = Depends(get_db)):
     """Fusiona productos duplicados en uno solo, sumando el stock de todos en el 'principal'."""
     principal_id = datos["principal_id"]
@@ -159,28 +228,56 @@ def fusionar(datos: dict, db: Session = Depends(get_db)):
         p.activo = False
 
     principal.stock = stock_sumado
-    db.commit()
     audit(db, usuario_id, "fusionar_productos",
           f"Fusionados en '{principal.nombre}' ({principal.codigo_barra}): "
           f"{', '.join(fusionados) if fusionados else 'ninguno'}. Stock final: {stock_sumado}")
+    _confirmar(db)
     return {"ok": True, "stock_final": stock_sumado}
 
 
-@router.post("/ajuste-stock/{producto_id}")
+@router.post("/ajuste-stock/{producto_id}", dependencies=[Depends(auth.require_stock_access)])
 def ajustar_stock(producto_id: int, datos: dict, db: Session = Depends(get_db)):
+    """Corrección manual: PISA el stock con el valor contado. Para mercadería que entra, usar /ingreso."""
     p = db.query(models.Producto).filter_by(id=producto_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="No encontrado")
     stock_anterior = p.stock
-    p.stock = datos["stock_nuevo"]
-    db.commit()
+    p.stock = _entero(datos.get("stock_nuevo"), "stock_nuevo")
     audit(db, datos.get("usuario_id"), "ajuste_stock",
           f"Stock de '{p.nombre}' ajustado: {stock_anterior} → {p.stock} "
           f"(motivo: {datos.get('motivo', 'sin especificar')})")
-    return {"ok": True}
+    _confirmar(db)
+    return {"ok": True, "stock_anterior": stock_anterior, "producto": _serializar(p)}
 
 
-@router.post("/importar-excel")
+@router.post("/{producto_id}/ingreso", dependencies=[Depends(auth.require_stock_access)])
+def ingreso_mercaderia(producto_id: int, datos: dict, db: Session = Depends(get_db)):
+    """Suma unidades al stock actual (ingreso de mercadería).
+
+    El incremento se hace en SQL (`stock = stock + n`), no leyendo y reescribiendo el valor: así una
+    venta que ocurra al mismo tiempo desde otro dispositivo no se pisa ni se pierde.
+    """
+    cantidad = _entero(datos.get("cantidad"), "cantidad", minimo=1)
+    p = db.query(models.Producto).filter_by(id=producto_id, activo=True).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    stock_anterior = p.stock
+    db.query(models.Producto).filter_by(id=producto_id).update(
+        {models.Producto.stock: models.Producto.stock + cantidad},
+        synchronize_session=False,
+    )
+    nota = (datos.get("nota") or "").strip()
+    audit(db, datos.get("usuario_id"), "ingreso_stock",
+          f"Ingreso de mercadería '{p.nombre}': +{cantidad} (antes {stock_anterior})"
+          + (f" — {nota}" if nota else ""))
+    _confirmar(db)
+    db.refresh(p)
+    return {"ok": True, "cantidad": cantidad, "stock_anterior": stock_anterior,
+            "stock_nuevo": p.stock, "producto": _serializar(p)}
+
+
+@router.post("/importar-excel", dependencies=[Depends(auth.require_dueno)])
 async def importar_excel(
     file: UploadFile = File(...),
     usuario_id: int = 0,
@@ -235,13 +332,13 @@ async def importar_excel(
         except Exception as e:
             errores.append(f"Fila {i}: {str(e)}")
 
-    db.commit()
     audit(db, usuario_id, "importar_excel",
           f"Importación Excel: {creados} creados, {actualizados} actualizados, {len(errores)} errores")
+    _confirmar(db)
     return {"creados": creados, "actualizados": actualizados, "errores": errores}
 
 
-@router.get("/exportar-excel")
+@router.get("/exportar-excel", dependencies=[Depends(auth.require_dueno)])
 def exportar_excel(db: Session = Depends(get_db)):
     prods = db.query(models.Producto).filter_by(activo=True).order_by(models.Producto.nombre).all()
 

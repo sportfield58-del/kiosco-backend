@@ -4,13 +4,14 @@ from sqlalchemy import func
 from datetime import datetime, date, timedelta
 import models
 from database import get_db
+from models import now_ar
 
 router = APIRouter(prefix="/reportes", tags=["reportes"])
 
 
 @router.get("/dia")
 def reporte_dia(fecha: str = None, db: Session = Depends(get_db)):
-    fecha_dt = datetime.strptime(fecha, "%Y-%m-%d").date() if fecha else date.today()
+    fecha_dt = datetime.strptime(fecha, "%Y-%m-%d").date() if fecha else now_ar().date()
 
     ventas = db.query(models.Venta).filter(
         func.date(models.Venta.fecha) == fecha_dt,
@@ -65,7 +66,7 @@ def reporte_dia(fecha: str = None, db: Session = Depends(get_db)):
 
 @router.get("/semana")
 def reporte_semana(db: Session = Depends(get_db)):
-    hoy = date.today()
+    hoy = now_ar().date()
     resultados = []
     for i in range(7):
         dia = hoy - timedelta(days=i)
