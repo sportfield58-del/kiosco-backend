@@ -215,6 +215,7 @@ def fusionar(datos: dict, db: Session = Depends(get_db)):
     if not principal:
         raise HTTPException(status_code=404, detail="Producto principal no encontrado")
 
+    stock_antes_principal = principal.stock
     stock_sumado = principal.stock
     fusionados = []
     for pid in ids:
@@ -228,6 +229,14 @@ def fusionar(datos: dict, db: Session = Depends(get_db)):
         p.activo = False
 
     principal.stock = stock_sumado
+    if stock_sumado != stock_antes_principal:
+        db.add(models.MovimientoStock(
+            producto_id=principal.id, tipo_movimiento="FUSION",
+            cantidad=stock_sumado - stock_antes_principal,
+            stock_anterior=stock_antes_principal, stock_nuevo=stock_sumado,
+            usuario_id=int(usuario_id) if usuario_id else None,
+            nota=f"Fusión de {len(fusionados)} producto(s) duplicado(s)",
+        ))
     audit(db, usuario_id, "fusionar_productos",
           f"Fusionados en '{principal.nombre}' ({principal.codigo_barra}): "
           f"{', '.join(fusionados) if fusionados else 'ninguno'}. Stock final: {stock_sumado}")
@@ -237,44 +246,96 @@ def fusionar(datos: dict, db: Session = Depends(get_db)):
 
 @router.post("/ajuste-stock/{producto_id}", dependencies=[Depends(auth.require_stock_access)])
 def ajustar_stock(producto_id: int, datos: dict, db: Session = Depends(get_db)):
-    """Corrección manual: PISA el stock con el valor contado. Para mercadería que entra, usar /ingreso."""
-    p = db.query(models.Producto).filter_by(id=producto_id).first()
+    """Corrección manual a partir de un conteo físico: fija el stock al valor contado.
+
+    Bloquea la fila (`SELECT ... FOR UPDATE`) mientras dura el ajuste: si una venta o otro ajuste
+    del mismo producto llegan al mismo tiempo desde otro dispositivo, esperan a que termine esta
+    transacción en vez de pisarse entre sí. El delta contra el stock/kardex se calcula acá, nunca en
+    el cliente.
+    """
+    p = db.query(models.Producto).filter_by(id=producto_id).with_for_update().first()
     if not p:
         raise HTTPException(status_code=404, detail="No encontrado")
     stock_anterior = p.stock
-    p.stock = _entero(datos.get("stock_nuevo"), "stock_nuevo")
-    audit(db, datos.get("usuario_id"), "ajuste_stock",
-          f"Stock de '{p.nombre}' ajustado: {stock_anterior} → {p.stock} "
-          f"(motivo: {datos.get('motivo', 'sin especificar')})")
+    stock_nuevo = _entero(datos.get("stock_nuevo"), "stock_nuevo")
+    delta = stock_nuevo - stock_anterior
+    p.stock = stock_nuevo
+    motivo = (datos.get("motivo") or "").strip() or "sin especificar"
+    usuario_id = datos.get("usuario_id")
+
+    db.add(models.MovimientoStock(
+        producto_id=p.id, tipo_movimiento="AJUSTE_POSITIVO" if delta >= 0 else "AJUSTE_NEGATIVO",
+        cantidad=delta, stock_anterior=stock_anterior, stock_nuevo=stock_nuevo,
+        usuario_id=int(usuario_id) if usuario_id else None, nota=motivo,
+    ))
+    audit(db, usuario_id, "ajuste_stock",
+          f"Stock de '{p.nombre}' ajustado: {stock_anterior} → {stock_nuevo} (motivo: {motivo})")
     _confirmar(db)
     return {"ok": True, "stock_anterior": stock_anterior, "producto": _serializar(p)}
 
 
 @router.post("/{producto_id}/ingreso", dependencies=[Depends(auth.require_stock_access)])
 def ingreso_mercaderia(producto_id: int, datos: dict, db: Session = Depends(get_db)):
-    """Suma unidades al stock actual (ingreso de mercadería).
+    """Suma unidades al stock actual (ingreso de mercadería) y deja un movimiento en el Kardex.
 
     El incremento se hace en SQL (`stock = stock + n`), no leyendo y reescribiendo el valor: así una
-    venta que ocurra al mismo tiempo desde otro dispositivo no se pisa ni se pierde.
+    venta que ocurra al mismo tiempo desde otro dispositivo no se pisa ni se pierde. El UPDATE toma
+    el lock de la fila hasta el commit, así que la relectura de abajo siempre ve exactamente lo que
+    se acaba de escribir, sin ventana de carrera posible.
     """
     cantidad = _entero(datos.get("cantidad"), "cantidad", minimo=1)
     p = db.query(models.Producto).filter_by(id=producto_id, activo=True).first()
     if not p:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    stock_anterior = p.stock
     db.query(models.Producto).filter_by(id=producto_id).update(
         {models.Producto.stock: models.Producto.stock + cantidad},
         synchronize_session=False,
     )
+    stock_nuevo = db.query(models.Producto.stock).filter_by(id=producto_id).scalar()
+    stock_anterior = stock_nuevo - cantidad
     nota = (datos.get("nota") or "").strip()
-    audit(db, datos.get("usuario_id"), "ingreso_stock",
-          f"Ingreso de mercadería '{p.nombre}': +{cantidad} (antes {stock_anterior})"
+    usuario_id = datos.get("usuario_id")
+
+    db.add(models.MovimientoStock(
+        producto_id=producto_id, tipo_movimiento="INGRESO_MANUAL", cantidad=cantidad,
+        stock_anterior=stock_anterior, stock_nuevo=stock_nuevo,
+        usuario_id=int(usuario_id) if usuario_id else None, nota=nota or None,
+    ))
+    audit(db, usuario_id, "ingreso_stock",
+          f"Ingreso de mercadería '{p.nombre}': +{cantidad} (antes {stock_anterior}, ahora {stock_nuevo})"
           + (f" — {nota}" if nota else ""))
     _confirmar(db)
     db.refresh(p)
     return {"ok": True, "cantidad": cantidad, "stock_anterior": stock_anterior,
-            "stock_nuevo": p.stock, "producto": _serializar(p)}
+            "stock_nuevo": stock_nuevo, "producto": _serializar(p)}
+
+
+@router.get("/{producto_id}/movimientos", dependencies=[Depends(auth.require_stock_access)])
+def historial_movimientos(producto_id: int, limite: int = 50, db: Session = Depends(get_db)):
+    """Kardex de un producto: cada venta, ingreso, ajuste, consumo o anulación que tocó su stock,
+    más reciente primero."""
+    movs = (
+        db.query(models.MovimientoStock)
+        .filter_by(producto_id=producto_id)
+        .order_by(models.MovimientoStock.fecha.desc())
+        .limit(min(limite, 200))
+        .all()
+    )
+    return [
+        {
+            "id": m.id,
+            "tipo_movimiento": m.tipo_movimiento,
+            "cantidad": m.cantidad,
+            "stock_anterior": m.stock_anterior,
+            "stock_nuevo": m.stock_nuevo,
+            "usuario": m.usuario.nombre if m.usuario else "—",
+            "referencia": m.referencia,
+            "nota": m.nota,
+            "fecha": m.fecha,
+        }
+        for m in movs
+    ]
 
 
 @router.post("/importar-excel", dependencies=[Depends(auth.require_dueno)])

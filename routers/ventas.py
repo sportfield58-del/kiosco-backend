@@ -134,7 +134,13 @@ def registrar_venta(datos: dict, db: Session = Depends(get_db)):
             db.rollback()
             raise HTTPException(status_code=400,
                                 detail=f"Stock insuficiente: '{producto.nombre}' tiene {producto.stock} unidades")
+        stock_antes = producto.stock
         producto.stock -= item["cantidad"]
+        db.add(models.MovimientoStock(
+            producto_id=producto.id, tipo_movimiento="VENTA", cantidad=-item["cantidad"],
+            stock_anterior=stock_antes, stock_nuevo=producto.stock,
+            usuario_id=int(usuario_id) if usuario_id else None, referencia=f"venta:{venta.id}",
+        ))
         iv = models.ItemVenta(
             venta_id=venta.id,
             producto_id=prod_id,
@@ -199,7 +205,13 @@ def consumo_empleado(datos: dict, db: Session = Depends(get_db)):
     db.flush()
 
     for producto, cantidad, precio_u, subtotal in items_procesados:
+        stock_antes = producto.stock
         producto.stock -= cantidad
+        db.add(models.MovimientoStock(
+            producto_id=producto.id, tipo_movimiento="CONSUMO_EMPLEADO", cantidad=-cantidad,
+            stock_anterior=stock_antes, stock_nuevo=producto.stock,
+            usuario_id=int(usuario_id) if usuario_id else None, referencia=f"consumo_empleado:{consumo.id}",
+        ))
         db.add(models.ItemConsumoEmpleado(
             consumo_id=consumo.id,
             producto_id=producto.id,
@@ -284,7 +296,13 @@ def consumo_dueno(datos: dict, db: Session = Depends(get_db)):
     db.flush()
 
     for producto, cantidad, precio_u, subtotal in items_procesados:
+        stock_antes = producto.stock
         producto.stock -= cantidad
+        db.add(models.MovimientoStock(
+            producto_id=producto.id, tipo_movimiento="CONSUMO_DUENO", cantidad=-cantidad,
+            stock_anterior=stock_antes, stock_nuevo=producto.stock,
+            usuario_id=int(usuario_id) if usuario_id else None, referencia=f"consumo_dueno:{consumo.id}",
+        ))
         db.add(models.ItemConsumoDueno(
             consumo_id=consumo.id,
             producto_id=producto.id,
@@ -329,7 +347,14 @@ def anular_venta(venta_id: int, datos: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="La venta ya fue anulada")
     for item in venta.items:
         if item.producto:
+            stock_antes = item.producto.stock
             item.producto.stock += item.cantidad
+            db.add(models.MovimientoStock(
+                producto_id=item.producto.id, tipo_movimiento="ANULACION_VENTA", cantidad=item.cantidad,
+                stock_anterior=stock_antes, stock_nuevo=item.producto.stock,
+                usuario_id=int(datos.get("usuario_id")) if datos.get("usuario_id") else None,
+                referencia=f"venta:{venta_id}",
+            ))
     venta.anulada = True
     db.commit()
     audit(db, datos.get("usuario_id"), "anular_venta",

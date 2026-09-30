@@ -149,6 +149,26 @@ class SolicitudStock(Base):
     usuario = relationship("Usuario")
 
 
+class MovimientoStock(Base):
+    """Kardex: rastro de cada cambio de stock sin importar el origen (venta, ingreso, ajuste,
+    consumo, anulación, fusión). `cantidad` es el delta aplicado: positivo si entra, negativo si sale.
+    `stock_anterior`/`stock_nuevo` se calculan siempre dentro de la misma transacción que escribe el
+    stock, así quedan consistentes con lo realmente guardado aunque haya otro movimiento simultáneo."""
+    __tablename__ = "movimientos_stock"
+    id = Column(Integer, primary_key=True, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False, index=True)
+    tipo_movimiento = Column(String, nullable=False)
+    cantidad = Column(Integer, nullable=False)
+    stock_anterior = Column(Integer, nullable=False)
+    stock_nuevo = Column(Integer, nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    referencia = Column(String, nullable=True)
+    nota = Column(Text, nullable=True)
+    fecha = Column(DateTime, default=now_ar, index=True)
+    producto = relationship("Producto")
+    usuario = relationship("Usuario")
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)
