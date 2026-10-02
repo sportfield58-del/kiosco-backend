@@ -56,7 +56,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 def puede_editar_stock(user) -> bool:
-    return user.rol in ("dueño", "admin") or bool(user.stock_habilitado)
+    return models.normalizar_rol(user.rol) in ("dueño", "admin") or bool(user.stock_habilitado)
 
 
 def require_stock_access(user=Depends(get_current_user)):
@@ -67,6 +67,6 @@ def require_stock_access(user=Depends(get_current_user)):
 
 
 def require_dueno(user=Depends(get_current_user)):
-    if user.rol not in ("dueño", "admin"):
+    if models.normalizar_rol(user.rol) not in ("dueño", "admin"):
         raise HTTPException(status_code=403, detail="Solo el dueño puede ver esta información")
     return user

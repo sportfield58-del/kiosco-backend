@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import text
+from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 import models, auth
 from database import engine, get_db, Base
@@ -45,17 +45,26 @@ async def no_cachear_api(request, call_next):
 
 @app.post("/login")
 def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(models.Usuario).filter_by(username=form.username).first()
+    # Case-insensitive y sin espacios: "Juan", "juan " y "JUAN" tienen que ser el mismo usuario.
+    # El teclado de un celular auto-capitaliza el primer caracter de un campo de texto si no se le
+    # dice lo contrario (ver Login.jsx), así que esto no es un caso raro — es lo esperable.
+    username = (form.username or "").strip().lower()
+    user = db.query(models.Usuario).filter(func.lower(models.Usuario.username) == username).first()
     if not user or not auth.verify_password(form.password, user.password_hash):
         raise HTTPException(status_code=400, detail="Credenciales incorrectas")
-    token = auth.create_token({"sub": user.id, "rol": user.rol})
+    if not user.activo:
+        # Recién acá, con la contraseña ya validada, se revela que la cuenta está desactivada
+        # (antes de validar la contraseña no se distingue de "credenciales incorrectas").
+        raise HTTPException(status_code=403, detail="Tu usuario está desactivado. Pedile al dueño que te reactive.")
+    rol = models.normalizar_rol(user.rol)
+    token = auth.create_token({"sub": user.id, "rol": rol})
     return {
         "access_token": token,
         "token_type": "bearer",
         "usuario": {
             "id": user.id,
             "nombre": user.nombre,
-            "rol": user.rol,
+            "rol": rol,
             "username": user.username,
             "stock_habilitado": user.stock_habilitado
         }
@@ -67,7 +76,7 @@ def me(current=Depends(auth.get_current_user)):
     return {
         "id": current.id,
         "nombre": current.nombre,
-        "rol": current.rol,
+        "rol": models.normalizar_rol(current.rol),
         "username": current.username,
         "stock_habilitado": current.stock_habilitado
     }

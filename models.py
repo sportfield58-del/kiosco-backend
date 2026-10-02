@@ -9,6 +9,17 @@ def now_ar():
     return datetime.now(AR).replace(tzinfo=None)
 
 
+ROLES_VALIDOS = ("vendedor", "admin", "dueño")
+
+
+def normalizar_rol(rol):
+    """'Admin', ' admin ', 'ADMIN' y 'admin' son el mismo rol. Sin esto, un rol guardado con una
+    mayúscula o un espacio de más (tipeado a mano, o autocapitalizado por el teclado del celular)
+    hace que esa persona no pase ningún chequeo de admin/dueño en ningún lado, aunque el login
+    funcione — queda "adentro" del sistema pero sin ver nada de lo que le corresponde a su rol."""
+    return (rol or "vendedor").strip().lower()
+
+
 class Usuario(Base):
     __tablename__ = "usuarios"
     id = Column(Integer, primary_key=True, index=True)

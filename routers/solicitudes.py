@@ -100,6 +100,6 @@ def verificar_acceso(usuario_id: int, db: Session = Depends(get_db)):
     if not u:
         return {"acceso": False}
     # Dueño y admin siempre tienen acceso
-    if u.rol in ["dueño", "admin"]:
+    if models.normalizar_rol(u.rol) in ("dueño", "admin"):
         return {"acceso": True}
     return {"acceso": bool(u.stock_habilitado)}
