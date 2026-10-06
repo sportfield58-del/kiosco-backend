@@ -153,8 +153,11 @@ def editar(producto_id: int, datos: dict, db: Session = Depends(get_db)):
         nuevos["precio_venta"] = _numero(datos["precio_venta"], "precio_venta")
         if nuevos["precio_venta"] <= 0:
             raise HTTPException(status_code=400, detail="El precio de venta debe ser mayor a 0")
-    if "stock" in datos:
-        nuevos["stock"] = _entero(datos["stock"], "stock")
+    # "stock" se ignora a propósito: editar un producto (nombre, precio...) nunca toca el stock.
+    # Antes el lápiz reemplazaba el stock con el número que hubiera en el formulario, sin motivo ni
+    # Kardex, y eso pisaba cargas hechas por otra persona — para los demás, el stock "se borraba
+    # solo". El stock solo cambia por /ingreso (suma) o /ajuste-stock (conteo, con motivo), que
+    # quedan registrados con usuario y antes/después. También protege de celulares con la app vieja.
     if "stock_minimo" in datos:
         nuevos["stock_minimo"] = _entero(datos["stock_minimo"], "stock_minimo")
     if "categoria" in datos:
@@ -259,8 +262,13 @@ def ajustar_stock(producto_id: int, datos: dict, db: Session = Depends(get_db)):
     stock_anterior = p.stock
     stock_nuevo = _entero(datos.get("stock_nuevo"), "stock_nuevo")
     delta = stock_nuevo - stock_anterior
+    motivo = (datos.get("motivo") or "").strip()
+    if delta < 0 and not motivo:
+        # Bajar stock sin explicación es justamente lo que generaba "se borró solo": que quede
+        # siempre registrado por qué (conteo, rotura, vencido...).
+        raise HTTPException(status_code=400, detail="Para bajar el stock indicá el motivo (ej: conteo, rotura, vencido)")
+    motivo = motivo or "sin especificar"
     p.stock = stock_nuevo
-    motivo = (datos.get("motivo") or "").strip() or "sin especificar"
     usuario_id = datos.get("usuario_id")
 
     db.add(models.MovimientoStock(
