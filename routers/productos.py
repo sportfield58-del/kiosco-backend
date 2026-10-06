@@ -177,7 +177,7 @@ def editar(producto_id: int, datos: dict, db: Session = Depends(get_db)):
     return {"ok": True, "producto": _serializar(p)}
 
 
-@router.delete("/{producto_id}", dependencies=[Depends(auth.require_dueno)])
+@router.delete("/{producto_id}", dependencies=[Depends(auth.require_stock_access)])
 def eliminar(producto_id: int, usuario_id: int = 0, db: Session = Depends(get_db)):
     p = db.query(models.Producto).filter_by(id=producto_id).first()
     if not p:
