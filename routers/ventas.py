@@ -87,7 +87,12 @@ def registrar_venta(datos: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Abri un turno primero")
 
     total_original = datos["total"]
-    total_final, es_nocturno = aplicar_recargo_nocturno(total_original)
+    if datos.get("tipo_venta") == "empleado":
+        # Consumo de empleado (ya con 20% off): la Caja no le muestra recargo nocturno, así que
+        # tampoco se registra — si no, lo cobrado y lo registrado no coinciden y la caja no cierra.
+        total_final, es_nocturno = total_original, False
+    else:
+        total_final, es_nocturno = aplicar_recargo_nocturno(total_original)
 
     # Pago mixto
     medio = datos.get("medio_pago", "efectivo")
